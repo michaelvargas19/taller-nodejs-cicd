@@ -1,254 +1,190 @@
-trigger:
-- "*"
+name: CI/CD Node.js
 
-pr:
-- "*"
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch:
 
-# If you enable external templates, uncomment this block.
-# resources:
-#   repositories:
-#   - repository: gitops
-#     type: git
-#     name: DevSecOps_GitOps
-#     ref: refs/heads/main
+permissions:
+  contents: read
 
-variables:
-  buildConfiguration: Release
-  nodeVersion: '18.x'
-  appName: 'taller-nodejs-app'
-  reportTitle: 'Reporte de ejecucion CI/CD'
+env:
+  NODE_VERSION: "18.x"
+  APP_NAME: "taller-nodejs-app"
+  DEFAULT_REPORT_TITLE: "Reporte de ejecucion CI/CD"
 
-stages:
-# 1) Generar artefactos
-- stage: Build
-  displayName: "CI: Generate artifacts"
-  jobs:
-  - job: BuildJob
-    displayName: "Build / Package"
-    pool:
-      vmImage: ubuntu-latest
+jobs:
+  build:
+    name: CI Generate artifacts
+    runs-on: ubuntu-latest
+
     steps:
-    - checkout: self
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - task: NodeTool@0
-      displayName: "Setup Node.js $(nodeVersion)"
-      inputs:
-        versionSpec: "$(nodeVersion)"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
-    - script: npm ci
-      displayName: "Install dependencies"
+      - name: Install dependencies
+        run: npm ci
 
-    - script: npm test
-      displayName: "Run unit tests"
+      - name: Run unit tests
+        run: npm test
 
-    - script: |
-        npm run build --if-present
-      displayName: "Build app"
+      - name: Build app
+        run: npm run build --if-present
 
-    - script: |
-        TITLE_FILE="src/config/report-title.txt"
+      - name: Load report title from file
+        shell: bash
+        run: |
+          TITLE_FILE="src/config/report-title.txt"
 
-        if [ -f "$TITLE_FILE" ]; then
-          REPORT_TITLE=$(tr -d '\r\n' < "$TITLE_FILE")
-        else
-          REPORT_TITLE="$(reportTitle)"
-        fi
+          if [ -f "$TITLE_FILE" ]; then
+            REPORT_TITLE=$(tr -d '\r\n' < "$TITLE_FILE")
+          else
+            REPORT_TITLE="$DEFAULT_REPORT_TITLE"
+          fi
 
-        if [ -z "$REPORT_TITLE" ]; then
-          REPORT_TITLE="$(reportTitle)"
-        fi
+          if [ -z "$REPORT_TITLE" ]; then
+            REPORT_TITLE="$DEFAULT_REPORT_TITLE"
+          fi
 
-        echo "Report title: $REPORT_TITLE"
-        echo "##vso[task.setvariable variable=reportTitle]$REPORT_TITLE"
-      displayName: "Load report title from file"
+          echo "REPORT_TITLE=$REPORT_TITLE" >> "$GITHUB_ENV"
+          echo "Report title: $REPORT_TITLE"
 
-    - script: |
-        mkdir -p "$(Build.ArtifactStagingDirectory)/web-report"
-        cp reports/pipeline-report.html "$(Build.ArtifactStagingDirectory)/web-report/index.html"
+      - name: Generate HTML report
+        shell: bash
+        run: |
+          mkdir -p artifacts/web-report
+          cp reports/pipeline-report.html artifacts/web-report/index.html
 
-        sed -i "s|__REPORT_TITLE__|$(reportTitle)|g" "$(Build.ArtifactStagingDirectory)/web-report/index.html"
-        sed -i "s|__APP_NAME__|$(appName)|g" "$(Build.ArtifactStagingDirectory)/web-report/index.html"
-        sed -i "s|__BUILD_NUMBER__|$(Build.BuildNumber)|g" "$(Build.ArtifactStagingDirectory)/web-report/index.html"
-        sed -i "s|__BRANCH__|$(Build.SourceBranchName)|g" "$(Build.ArtifactStagingDirectory)/web-report/index.html"
-        sed -i "s|__COMMIT__|$(Build.SourceVersion)|g" "$(Build.ArtifactStagingDirectory)/web-report/index.html"
-      displayName: "Generate HTML report"
+          sed -i "s|__REPORT_TITLE__|$REPORT_TITLE|g" artifacts/web-report/index.html
+          sed -i "s|__APP_NAME__|$APP_NAME|g" artifacts/web-report/index.html
+          sed -i "s|__BUILD_NUMBER__|${{ github.run_number }}|g" artifacts/web-report/index.html
+          sed -i "s|__BRANCH__|${{ github.ref_name }}|g" artifacts/web-report/index.html
+          sed -i "s|__COMMIT__|${{ github.sha }}|g" artifacts/web-report/index.html
 
-    - task: PublishPipelineArtifact@1
-      displayName: "Publish HTML report artifact"
-      inputs:
-        targetPath: "$(Build.ArtifactStagingDirectory)/web-report"
-        artifact: "overview-report"
+      - name: Upload HTML report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: overview-report
+          path: artifacts/web-report
+          if-no-files-found: error
 
-    - task: ArchiveFiles@2
-      displayName: "Package artifact"
-      inputs:
-        rootFolderOrFile: "$(System.DefaultWorkingDirectory)"
-        includeRootFolder: false
-        archiveType: zip
-        archiveFile: "$(Build.ArtifactStagingDirectory)/app.zip"
-        replaceExistingArchive: true
+      - name: Package artifact
+        shell: bash
+        run: |
+          zip -r artifacts/app.zip . -x ".git/*" "node_modules/*" "artifacts/*"
 
-    - task: PublishPipelineArtifact@1
-      displayName: "Publish artifact"
-      inputs:
-        targetPath: "$(Build.ArtifactStagingDirectory)/app.zip"
-        artifact: "drop"
+      - name: Upload application artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: drop
+          path: artifacts/app.zip
+          if-no-files-found: error
 
-    - script: |
-        SUMMARY_FILE="$(Build.ArtifactStagingDirectory)/pipeline-summary.md"
-        ARTIFACTS_URL="$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=artifacts&type=publishedArtifacts"
+      - name: Publish run summary
+        shell: bash
+        run: |
+          {
+            echo "# Overview"
+            echo ""
+            echo "- Reporte: **$REPORT_TITLE**"
+            echo "- Repositorio: **${{ github.repository }}**"
+            echo "- Workflow: **${{ github.workflow }}**"
+            echo "- Ejecucion: **${{ github.run_number }}**"
+            echo "- Rama: **${{ github.ref }}**"
+            echo "- Commit: **${{ github.sha }}**"
+            echo ""
+            echo "## Artefactos publicados"
+            echo "- **overview-report**: contiene index.html del reporte"
+            echo "- **drop**: contiene app.zip"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-        echo "# Overview" > "$SUMMARY_FILE"
-        echo "" >> "$SUMMARY_FILE"
-        echo "- Reporte: **$(reportTitle)**" >> "$SUMMARY_FILE"
-        echo "- Proyecto: **$(System.TeamProject)**" >> "$SUMMARY_FILE"
-        echo "- Pipeline: **$(Build.DefinitionName)**" >> "$SUMMARY_FILE"
-        echo "- Ejecucion: **$(Build.BuildNumber)**" >> "$SUMMARY_FILE"
-        echo "- Rama: **$(Build.SourceBranch)**" >> "$SUMMARY_FILE"
-        echo "- Commit: **$(Build.SourceVersion)**" >> "$SUMMARY_FILE"
-        echo "" >> "$SUMMARY_FILE"
-        echo "## Artefactos publicados" >> "$SUMMARY_FILE"
-        echo "- **overview-report**: contiene index.html del reporte" >> "$SUMMARY_FILE"
-        echo "- **drop**: contiene app.zip" >> "$SUMMARY_FILE"
-        echo "" >> "$SUMMARY_FILE"
-        echo "[Abrir artefactos de esta ejecucion]($ARTIFACTS_URL)" >> "$SUMMARY_FILE"
-
-        echo "##vso[task.uploadsummary]$SUMMARY_FILE"
-      displayName: "Publish run summary tab"
-
-  #- template: CI/build/dotnet/job.yml@gitops
-  #  parameters:
-  #    vmImage: "ubuntu-latest"
-  #    dotnetSdkVersion: "8.0.x"
-  #    projectOrSolution: "**/*.sln"
-  #    configuration: "Release"
-  #    publishProject: "src/MyApi/MyApi.csproj"
-  #    zipName: "app.zip"
-  #    artifactName: "drop"
-
-# 2) Despliegue en desarrollo (depende de Build, solo branch develop)
-- stage: DeployDev
-  displayName: "CD: Deploy to dev"
-  dependsOn: Build
-  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
-  jobs:
-  - deployment: DeployDevJob
-    displayName: "Deploy Dev"
-    environment: "dev"
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - script: |
-              echo "Desplegando a Desarrollo..."
-            displayName: "Deploy dev"
-
-# 3) Despliegue en pruebas (depende de Build, solo branch release/*) + APROBACIÓN
-- stage: DeployQA
-  displayName: "CD: Deploy to QA"
-  dependsOn: Build
-  condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
-  jobs:
-  - deployment: DeployQAJob
-    displayName: "Deploy QA"
-    # Approval configured in environment "qa"
-    environment: "qa"
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - script: |
-              echo "Desplegando a Pruebas..."
-            displayName: "Deploy qa"
-
-- stage: ChangeManagement
-  displayName: "CD: Change management"
-  dependsOn: Build
-  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-  jobs:
-  - deployment: ChangeMgmtJob
-    displayName: "Approval / Change management"
-    # This environment should configure Approvals & checks with:
-    # - G-Gestion_Cambio
-    # - G_Admin_Configuracion
-    # - TRV_Especialista_Infraestructura
-    environment: "change-management"
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - script: |
-              echo "Ejecutando gestión del cambio..."
-            displayName: "Change management"
-
-
-
-# 5) Pruebas funcionales (depende de Despliegue en pruebas)
-- stage: FunctionalTests
-  displayName: "CQ: Functional tests"
-  dependsOn: DeployQA
-  condition: succeeded('DeployQA')
-  jobs:
-  - job: FunctionalTestsJob
+  deploy_dev:
+    name: CD Deploy to dev
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/develop'
+    environment: dev
     steps:
-    - script: |
-        echo "Ejecutando pruebas funcionales..."
-      displayName: "Functional tests"
+      - name: Deploy dev
+        run: echo "Desplegando a Desarrollo..."
 
-# 6) Pruebas no funcionales (depende de Despliegue en pruebas)
-- stage: NonFunctionalTests
-  displayName: "CQ: Non-functional tests"
-  dependsOn: DeployQA
-  condition: succeeded('DeployQA')
-  jobs:
-  - job: NonFunctionalTestsJob
+  deploy_qa:
+    name: CD Deploy to QA
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/heads/release/')
+    environment: qa
     steps:
-    - script: |
-        echo "Ejecutando pruebas no funcionales..."
-      displayName: "Non-functional tests"
+      - name: Deploy qa
+        run: echo "Desplegando a Pruebas..."
 
-# 7) Pruebas dinámicas seguridad (depende de Despliegue en pruebas)
-- stage: DynamicSecurityTests
-  displayName: "CQ: Dynamic security tests"
-  dependsOn: DeployQA
-  condition: succeeded('DeployQA')
-  jobs:
-  - job: DASTJob
+  change_management:
+    name: CD Change management
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: change-management
     steps:
-    - script: |
-        echo "Ejecutando DAST..."
-      displayName: "DAST"
+      - name: Change management
+        run: echo "Ejecutando gestion del cambio..."
 
-# 8) Despliegue en producción (depende de Gestión del cambio, por demanda)
-- stage: DeployProd
-  displayName: "CD: Deploy to production"
-  dependsOn: ChangeManagement
-  condition: succeeded('ChangeManagement')
-  jobs:
-  - deployment: DeployProdJob
-    displayName: "Deploy Prod"
-    environment: "prod"
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - script: |
-              echo "Esperando 1 minuto antes del despliegue..."
-              sleep 60
-            displayName: "Delay 1 minute"
-
-          - script: |
-              echo "Desplegando a Producción..."
-            displayName: "Deploy prod"
-
-# 9) Pruebas PIR (depende de Despliegue en producción)
-- stage: PIRTests
-  displayName: "CQ: PIR tests"
-  dependsOn: DeployProd
-  condition: succeeded('DeployProd')
-  jobs:
-  - job: PIRJob
+  functional_tests:
+    name: CQ Functional tests
+    runs-on: ubuntu-latest
+    needs: deploy_qa
+    if: needs.deploy_qa.result == 'success'
     steps:
-    - script: |
-        echo "Ejecutando pruebas PIR..."
-      displayName: "PIR tests"
+      - name: Functional tests
+        run: echo "Ejecutando pruebas funcionales..."
+
+  non_functional_tests:
+    name: CQ Non-functional tests
+    runs-on: ubuntu-latest
+    needs: deploy_qa
+    if: needs.deploy_qa.result == 'success'
+    steps:
+      - name: Non-functional tests
+        run: echo "Ejecutando pruebas no funcionales..."
+
+  dynamic_security_tests:
+    name: CQ Dynamic security tests
+    runs-on: ubuntu-latest
+    needs: deploy_qa
+    if: needs.deploy_qa.result == 'success'
+    steps:
+      - name: DAST
+        run: echo "Ejecutando DAST..."
+
+  deploy_prod:
+    name: CD Deploy to production
+    runs-on: ubuntu-latest
+    needs: change_management
+    if: needs.change_management.result == 'success'
+    environment: prod
+    steps:
+      - name: Delay 1 minute
+        run: |
+          echo "Esperando 1 minuto antes del despliegue..."
+          sleep 60
+
+      - name: Deploy prod
+        run: echo "Desplegando a Produccion..."
+
+  pir_tests:
+    name: CQ PIR tests
+    runs-on: ubuntu-latest
+    needs: deploy_prod
+    if: needs.deploy_prod.result == 'success'
+    steps:
+      - name: PIR tests
+        run: echo "Ejecutando pruebas PIR..."
