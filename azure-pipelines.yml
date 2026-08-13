@@ -1,0 +1,254 @@
+trigger:
+- "*"
+
+pr:
+- "*"
+
+# If you enable external templates, uncomment this block.
+# resources:
+#   repositories:
+#   - repository: gitops
+#     type: git
+#     name: DevSecOps_GitOps
+#     ref: refs/heads/main
+
+variables:
+  buildConfiguration: Release
+  nodeVersion: '18.x'
+  appName: 'taller-nodejs-app'
+  reportTitle: 'Reporte de ejecucion CI/CD'
+
+stages:
+# 1) Generar artefactos
+- stage: Build
+  displayName: "CI: Generate artifacts"
+  jobs:
+  - job: BuildJob
+    displayName: "Build / Package"
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - checkout: self
+
+    - task: NodeTool@0
+      displayName: "Setup Node.js $(nodeVersion)"
+      inputs:
+        versionSpec: "$(nodeVersion)"
+
+    - script: npm ci
+      displayName: "Install dependencies"
+
+    - script: npm test
+      displayName: "Run unit tests"
+
+    - script: |
+        npm run build --if-present
+      displayName: "Build app"
+
+    - script: |
+        TITLE_FILE="src/config/report-title.txt"
+
+        if [ -f "$TITLE_FILE" ]; then
+          REPORT_TITLE=$(tr -d '\r\n' < "$TITLE_FILE")
+        else
+          REPORT_TITLE="$(reportTitle)"
+        fi
+
+        if [ -z "$REPORT_TITLE" ]; then
+          REPORT_TITLE="$(reportTitle)"
+        fi
+
+        echo "Report title: $REPORT_TITLE"
+        echo "##vso[task.setvariable variable=reportTitle]$REPORT_TITLE"
+      displayName: "Load report title from file"
+
+    - script: |
+        mkdir -p "$(Build.ArtifactStagingDirectory)/web-report"
+        cp reports/pipeline-report.html "$(Build.ArtifactStagingDirectory)/web-report/index.html"
+
+        sed -i "s|__REPORT_TITLE__|$(reportTitle)|g" "$(Build.ArtifactStagingDirectory)/web-report/index.html"
+        sed -i "s|__APP_NAME__|$(appName)|g" "$(Build.ArtifactStagingDirectory)/web-report/index.html"
+        sed -i "s|__BUILD_NUMBER__|$(Build.BuildNumber)|g" "$(Build.ArtifactStagingDirectory)/web-report/index.html"
+        sed -i "s|__BRANCH__|$(Build.SourceBranchName)|g" "$(Build.ArtifactStagingDirectory)/web-report/index.html"
+        sed -i "s|__COMMIT__|$(Build.SourceVersion)|g" "$(Build.ArtifactStagingDirectory)/web-report/index.html"
+      displayName: "Generate HTML report"
+
+    - task: PublishPipelineArtifact@1
+      displayName: "Publish HTML report artifact"
+      inputs:
+        targetPath: "$(Build.ArtifactStagingDirectory)/web-report"
+        artifact: "overview-report"
+
+    - task: ArchiveFiles@2
+      displayName: "Package artifact"
+      inputs:
+        rootFolderOrFile: "$(System.DefaultWorkingDirectory)"
+        includeRootFolder: false
+        archiveType: zip
+        archiveFile: "$(Build.ArtifactStagingDirectory)/app.zip"
+        replaceExistingArchive: true
+
+    - task: PublishPipelineArtifact@1
+      displayName: "Publish artifact"
+      inputs:
+        targetPath: "$(Build.ArtifactStagingDirectory)/app.zip"
+        artifact: "drop"
+
+    - script: |
+        SUMMARY_FILE="$(Build.ArtifactStagingDirectory)/pipeline-summary.md"
+        ARTIFACTS_URL="$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=artifacts&type=publishedArtifacts"
+
+        echo "# Overview" > "$SUMMARY_FILE"
+        echo "" >> "$SUMMARY_FILE"
+        echo "- Reporte: **$(reportTitle)**" >> "$SUMMARY_FILE"
+        echo "- Proyecto: **$(System.TeamProject)**" >> "$SUMMARY_FILE"
+        echo "- Pipeline: **$(Build.DefinitionName)**" >> "$SUMMARY_FILE"
+        echo "- Ejecucion: **$(Build.BuildNumber)**" >> "$SUMMARY_FILE"
+        echo "- Rama: **$(Build.SourceBranch)**" >> "$SUMMARY_FILE"
+        echo "- Commit: **$(Build.SourceVersion)**" >> "$SUMMARY_FILE"
+        echo "" >> "$SUMMARY_FILE"
+        echo "## Artefactos publicados" >> "$SUMMARY_FILE"
+        echo "- **overview-report**: contiene index.html del reporte" >> "$SUMMARY_FILE"
+        echo "- **drop**: contiene app.zip" >> "$SUMMARY_FILE"
+        echo "" >> "$SUMMARY_FILE"
+        echo "[Abrir artefactos de esta ejecucion]($ARTIFACTS_URL)" >> "$SUMMARY_FILE"
+
+        echo "##vso[task.uploadsummary]$SUMMARY_FILE"
+      displayName: "Publish run summary tab"
+
+  #- template: CI/build/dotnet/job.yml@gitops
+  #  parameters:
+  #    vmImage: "ubuntu-latest"
+  #    dotnetSdkVersion: "8.0.x"
+  #    projectOrSolution: "**/*.sln"
+  #    configuration: "Release"
+  #    publishProject: "src/MyApi/MyApi.csproj"
+  #    zipName: "app.zip"
+  #    artifactName: "drop"
+
+# 2) Despliegue en desarrollo (depende de Build, solo branch develop)
+- stage: DeployDev
+  displayName: "CD: Deploy to dev"
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+  jobs:
+  - deployment: DeployDevJob
+    displayName: "Deploy Dev"
+    environment: "dev"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - script: |
+              echo "Desplegando a Desarrollo..."
+            displayName: "Deploy dev"
+
+# 3) Despliegue en pruebas (depende de Build, solo branch release/*) + APROBACIÓN
+- stage: DeployQA
+  displayName: "CD: Deploy to QA"
+  dependsOn: Build
+  condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'))
+  jobs:
+  - deployment: DeployQAJob
+    displayName: "Deploy QA"
+    # Approval configured in environment "qa"
+    environment: "qa"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - script: |
+              echo "Desplegando a Pruebas..."
+            displayName: "Deploy qa"
+
+- stage: ChangeManagement
+  displayName: "CD: Change management"
+  dependsOn: Build
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: ChangeMgmtJob
+    displayName: "Approval / Change management"
+    # This environment should configure Approvals & checks with:
+    # - G-Gestion_Cambio
+    # - G_Admin_Configuracion
+    # - TRV_Especialista_Infraestructura
+    environment: "change-management"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - script: |
+              echo "Ejecutando gestión del cambio..."
+            displayName: "Change management"
+
+
+
+# 5) Pruebas funcionales (depende de Despliegue en pruebas)
+- stage: FunctionalTests
+  displayName: "CQ: Functional tests"
+  dependsOn: DeployQA
+  condition: succeeded('DeployQA')
+  jobs:
+  - job: FunctionalTestsJob
+    steps:
+    - script: |
+        echo "Ejecutando pruebas funcionales..."
+      displayName: "Functional tests"
+
+# 6) Pruebas no funcionales (depende de Despliegue en pruebas)
+- stage: NonFunctionalTests
+  displayName: "CQ: Non-functional tests"
+  dependsOn: DeployQA
+  condition: succeeded('DeployQA')
+  jobs:
+  - job: NonFunctionalTestsJob
+    steps:
+    - script: |
+        echo "Ejecutando pruebas no funcionales..."
+      displayName: "Non-functional tests"
+
+# 7) Pruebas dinámicas seguridad (depende de Despliegue en pruebas)
+- stage: DynamicSecurityTests
+  displayName: "CQ: Dynamic security tests"
+  dependsOn: DeployQA
+  condition: succeeded('DeployQA')
+  jobs:
+  - job: DASTJob
+    steps:
+    - script: |
+        echo "Ejecutando DAST..."
+      displayName: "DAST"
+
+# 8) Despliegue en producción (depende de Gestión del cambio, por demanda)
+- stage: DeployProd
+  displayName: "CD: Deploy to production"
+  dependsOn: ChangeManagement
+  condition: succeeded('ChangeManagement')
+  jobs:
+  - deployment: DeployProdJob
+    displayName: "Deploy Prod"
+    environment: "prod"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - script: |
+              echo "Esperando 1 minuto antes del despliegue..."
+              sleep 60
+            displayName: "Delay 1 minute"
+
+          - script: |
+              echo "Desplegando a Producción..."
+            displayName: "Deploy prod"
+
+# 9) Pruebas PIR (depende de Despliegue en producción)
+- stage: PIRTests
+  displayName: "CQ: PIR tests"
+  dependsOn: DeployProd
+  condition: succeeded('DeployProd')
+  jobs:
+  - job: PIRJob
+    steps:
+    - script: |
+        echo "Ejecutando pruebas PIR..."
+      displayName: "PIR tests"
