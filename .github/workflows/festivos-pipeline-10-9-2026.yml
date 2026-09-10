@@ -1,0 +1,112 @@
+# GitHub Actions Workflow - Pipeline de Generación de Festivos en Colombia
+# Este workflow genera un archivo de texto con todos los festivos del año en curso
+# Se ejecuta automáticamente en cambios en la rama main
+
+name: Festivos Colombia Pipeline
+
+# Trigger: Se ejecuta cuando hay push en la rama main
+on:
+  push:
+    branches:
+      - main
+
+# Definición del job del pipeline
+jobs:
+  # Job: Build - Instala dependencias y compila el proyecto
+  build:
+    # Especifica el entorno de ejecución
+    runs-on: ubuntu-latest
+    
+    steps:
+      # Paso 1: Checkout del código fuente
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      # Paso 2: Configurar Node.js con versión 18.x
+      # Esta es la versión especificada para el proyecto
+      - name: Configurar Node.js 18.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+
+      # Paso 3: Instalar dependencias del proyecto
+      - name: Instalar dependencias (npm install)
+        run: npm install
+
+      # Paso 4: Compilar el proyecto
+      - name: Compilar proyecto (npm run build)
+        run: npm run build
+
+  # Job: Test - Ejecuta las pruebas unitarias
+  test:
+    # Especifica que este job depende de que el job 'build' sea exitoso
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      # Paso 1: Checkout del código
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      # Paso 2: Configurar Node.js con versión 18.x
+      - name: Configurar Node.js 18.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+
+      # Paso 3: Instalar dependencias
+      - name: Instalar dependencias
+        run: npm install
+
+      # Paso 4: Ejecutar pruebas
+      - name: Ejecutar pruebas (npm test)
+        run: npm test
+
+  # Job: Deploy - Simula el despliegue con mensaje de éxito
+  deploy:
+    # Especifica que este job depende de que el job 'test' sea exitoso
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      # Paso 1: Checkout del código
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      # Paso 2: Configurar Node.js con versión 18.x
+      - name: Configurar Node.js 18.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+
+      # Paso 3: Instalar dependencias
+      - name: Instalar dependencias
+        run: npm install
+
+      # Paso 4: Generar archivo de festivos
+      # Este paso crea un archivo de texto con todos los festivos de Colombia
+      - name: Generar archivo de festivos
+        run: npm run generate-festivos
+
+      # Paso 5: Imprimir mensaje de éxito del despliegue
+      # Este es un despliegue simulado que solo imprime un mensaje
+      - name: Despliegue simulado - Mensaje de éxito
+        run: |
+          echo "✅ ===== DESPLIEGUE EXITOSO ====="
+          echo "📅 Archivo de festivos generado correctamente"
+          echo "📁 Ubicación: ./festivos-colombia-$(date +%Y).txt"
+          echo "🇨🇴 Festivos de Colombia del año en curso"
+          echo "⏰ Despliegue completado a las $(date)"
+          echo "===================================="
+
+      # Paso 6: Mostrar el contenido del archivo generado (opcional)
+      - name: Mostrar contenido del archivo generado
+        run: cat festivos-colombia-*.txt || echo "Archivo de festivos no encontrado"
+
+      # Paso 7: Descargar el archivo como artefacto (opcional)
+      - name: Descargar artefacto - Archivo de festivos
+        uses: actions/upload-artifact@v4
+        with:
+          name: festivos-colombia
+          path: festivos-colombia-*.txt
+          retention-days: 30
