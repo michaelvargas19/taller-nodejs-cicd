@@ -1,190 +1,114 @@
-name: CI/CD Node.js
+# GitHub Actions Workflow - Pipeline de Generación de Festivos en Colombia
+# Este workflow genera un archivo de texto con todos los festivos del año en curso
+# Se ejecuta automáticamente en cambios en la rama main
 
+name: Festivos Colombia Pipeline
+
+# Trigger: Se ejecuta cuando hay push en la rama main
 on:
   push:
     branches:
-      - "**"
-  pull_request:
-    branches:
-      - "**"
-  workflow_dispatch:
+      - main
 
-permissions:
-  contents: read
-
-env:
-  NODE_VERSION: "18.x"
-  APP_NAME: "taller-nodejs-app"
-  DEFAULT_REPORT_TITLE: "Reporte de ejecucion CI/CD"
-
+# Definición del job del pipeline
 jobs:
-  build:
-    name: CI Generate artifacts
+  # Job: Generar y mostrar festivos de Colombia
+  festivos:
+    # Especifica el entorno de ejecución
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Checkout
+      # Paso 1: Checkout del código fuente
+      - name: Checkout código
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      # Paso 2: Configurar Node.js con versión 18.x
+      # Esta es la versión especificada para el proyecto
+      - name: Configurar Node.js 18.x
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          node-version: '18.x'
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run unit tests
-        run: npm test
-
-      - name: Build app
-        run: npm run build --if-present
-
-      - name: Load report title from file
-        shell: bash
+      # Paso 3: Generar archivo con festivos de Colombia
+      # Este paso crea un archivo de texto con todos los festivos del año en curso
+      - name: Generar archivo de festivos de Colombia
         run: |
-          TITLE_FILE="src/config/report-title.txt"
+          node -e "
+          const fs = require('fs');
+          const year = new Date().getFullYear();
+          
+          // Festivos fijos de Colombia
+          const festivosFijos = [
+            { fecha: '01-01', nombre: 'Año Nuevo' },
+            { fecha: '05-01', nombre: 'Día del Trabajo' },
+            { fecha: '07-01', nombre: 'Día de Independencia' },
+            { fecha: '08-07', nombre: 'Batalla de Boyacá' },
+            { fecha: '12-08', nombre: 'Inmaculada Concepción' },
+            { fecha: '12-25', nombre: 'Navidad' }
+          ];
+          
+          // Calcular Semana Santa (Pascua)
+          function calcularPascua(year) {
+            const a = year % 19;
+            const b = Math.floor(year / 100);
+            const c = year % 100;
+            const d = Math.floor(b / 4);
+            const e = b % 4;
+            const f = Math.floor((b + 8) / 25);
+            const g = Math.floor((b - f + 1) / 3);
+            const h = (19 * a + b - d - g + 15) % 30;
+            const i = Math.floor(c / 4);
+            const k = c % 4;
+            const l = (32 + 2 * e + 2 * i - h - k) % 7;
+            const m = Math.floor((a + 11 * h + 22 * l) / 451);
+            const mes = Math.floor((h + l - 7 * m + 114) / 31);
+            const dia = ((h + l - 7 * m + 114) % 31) + 1;
+            return new Date(year, mes - 1, dia);
+          }
+          
+          const pascua = calcularPascua(year);
+          
+          // Festivos móviles basados en Pascua
+          const festivosMoviles = [
+            { nombre: 'Viernes Santo', diasAntesDeAnio: -2, fecha: new Date(pascua.getTime() - 2 * 24 * 60 * 60 * 1000) },
+            { nombre: 'Lunes de Pascua', diasAntesDeAnio: 1, fecha: new Date(pascua.getTime() + 1 * 24 * 60 * 60 * 1000) },
+            { nombre: 'Ascensión del Señor', diasAntesDeAnio: 39, fecha: new Date(pascua.getTime() + 39 * 24 * 60 * 60 * 1000) },
+            { nombre: 'Corpus Christi', diasAntesDeAnio: 60, fecha: new Date(pascua.getTime() + 60 * 24 * 60 * 60 * 1000) },
+            { nombre: 'Sagrado Corazón', diasAntesDeAnio: 68, fecha: new Date(pascua.getTime() + 68 * 24 * 60 * 60 * 1000) }
+          ];
+          
+          // Combinar todos los festivos
+          const todosFestivos = [
+            ...festivosFijos.map(f => ({
+              ...f,
+              fecha: new Date(year, parseInt(f.fecha.split('-')[0]) - 1, parseInt(f.fecha.split('-')[1]))
+            })),
+            ...festivosMoviles
+          ];
+          
+          // Ordenar por fecha
+          todosFestivos.sort((a, b) => a.fecha - b.fecha);
+          
+          // Crear contenido del archivo
+          let contenido = \`FESTIVOS DE COLOMBIA - AÑO \${year}\n\`;
+          contenido += '='.repeat(50) + '\n\n';
+          
+          todosFestivos.forEach((f, idx) => {
+            const fecha = f.fecha.toLocaleDateString('es-CO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            contenido += \`\${idx + 1}. \${f.nombre}\n   Fecha: \${fecha}\n\n\`;
+          });
+          
+          // Guardar archivo
+          fs.writeFileSync(\`festivos-colombia-\${year}.txt\`, contenido);
+          console.log('✅ Archivo de festivos generado exitosamente');
+          "
 
-          if [ -f "$TITLE_FILE" ]; then
-            REPORT_TITLE=$(tr -d '\r\n' < "$TITLE_FILE")
-          else
-            REPORT_TITLE="$DEFAULT_REPORT_TITLE"
-          fi
-
-          if [ -z "$REPORT_TITLE" ]; then
-            REPORT_TITLE="$DEFAULT_REPORT_TITLE"
-          fi
-
-          echo "REPORT_TITLE=$REPORT_TITLE" >> "$GITHUB_ENV"
-          echo "Report title: $REPORT_TITLE"
-
-      - name: Generate HTML report
-        shell: bash
+      # Paso 4: Imprimir todos los festivos del año
+      # Este paso muestra en pantalla todos los festivos calculados
+      - name: Mostrar festivos de Colombia del año en curso
         run: |
-          mkdir -p artifacts/web-report
-          cp reports/pipeline-report.html artifacts/web-report/index.html
-
-          sed -i "s|__REPORT_TITLE__|$REPORT_TITLE|g" artifacts/web-report/index.html
-          sed -i "s|__APP_NAME__|$APP_NAME|g" artifacts/web-report/index.html
-          sed -i "s|__BUILD_NUMBER__|${{ github.run_number }}|g" artifacts/web-report/index.html
-          sed -i "s|__BRANCH__|${{ github.ref_name }}|g" artifacts/web-report/index.html
-          sed -i "s|__COMMIT__|${{ github.sha }}|g" artifacts/web-report/index.html
-
-      - name: Upload HTML report artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: overview-report
-          path: artifacts/web-report
-          if-no-files-found: error
-
-      - name: Package artifact
-        shell: bash
-        run: |
-          zip -r artifacts/app.zip . -x ".git/*" "node_modules/*" "artifacts/*"
-
-      - name: Upload application artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: drop
-          path: artifacts/app.zip
-          if-no-files-found: error
-
-      - name: Publish run summary
-        shell: bash
-        run: |
-          {
-            echo "# Overview"
-            echo ""
-            echo "- Reporte: **$REPORT_TITLE**"
-            echo "- Repositorio: **${{ github.repository }}**"
-            echo "- Workflow: **${{ github.workflow }}**"
-            echo "- Ejecucion: **${{ github.run_number }}**"
-            echo "- Rama: **${{ github.ref }}**"
-            echo "- Commit: **${{ github.sha }}**"
-            echo ""
-            echo "## Artefactos publicados"
-            echo "- **overview-report**: contiene index.html del reporte"
-            echo "- **drop**: contiene app.zip"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  deploy_dev:
-    name: CD Deploy to dev
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/develop'
-    environment: dev
-    steps:
-      - name: Deploy dev
-        run: echo "Desplegando a Desarrollo..."
-
-  deploy_qa:
-    name: CD Deploy to QA
-    runs-on: ubuntu-latest
-    needs: build
-    if: startsWith(github.ref, 'refs/heads/release/')
-    environment: qa
-    steps:
-      - name: Deploy qa
-        run: echo "Desplegando a Pruebas..."
-
-  change_management:
-    name: CD Change management
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    environment: change-management
-    steps:
-      - name: Change management
-        run: echo "Ejecutando gestion del cambio..."
-
-  functional_tests:
-    name: CQ Functional tests
-    runs-on: ubuntu-latest
-    needs: deploy_qa
-    if: needs.deploy_qa.result == 'success'
-    steps:
-      - name: Functional tests
-        run: echo "Ejecutando pruebas funcionales..."
-
-  non_functional_tests:
-    name: CQ Non-functional tests
-    runs-on: ubuntu-latest
-    needs: deploy_qa
-    if: needs.deploy_qa.result == 'success'
-    steps:
-      - name: Non-functional tests
-        run: echo "Ejecutando pruebas no funcionales..."
-
-  dynamic_security_tests:
-    name: CQ Dynamic security tests
-    runs-on: ubuntu-latest
-    needs: deploy_qa
-    if: needs.deploy_qa.result == 'success'
-    steps:
-      - name: DAST
-        run: echo "Ejecutando DAST..."
-
-  deploy_prod:
-    name: CD Deploy to production
-    runs-on: ubuntu-latest
-    needs: change_management
-    if: needs.change_management.result == 'success'
-    environment: prod
-    steps:
-      - name: Delay 1 minute
-        run: |
-          echo "Esperando 1 minuto antes del despliegue..."
-          sleep 60
-
-      - name: Deploy prod
-        run: echo "Desplegando a Produccion..."
-
-  pir_tests:
-    name: CQ PIR tests
-    runs-on: ubuntu-latest
-    needs: deploy_prod
-    if: needs.deploy_prod.result == 'success'
-    steps:
-      - name: PIR tests
-        run: echo "Ejecutando pruebas PIR..."
+          echo "🇨🇴 ===== FESTIVOS DE COLOMBIA ====="
+          echo ""
+          cat festivos-colombia-*.txt
+          echo ""
+          echo "===================================="
