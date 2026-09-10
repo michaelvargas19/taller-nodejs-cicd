@@ -8,7 +8,7 @@ name: Festivos Colombia Pipeline
 on:
   workflow_dispatch:
     inputs:
-      año:
+      anio:
         description: 'Año para calcular festivos (si se deja vacío, usa el año actual)'
         required: false
         type: string
@@ -38,7 +38,7 @@ jobs:
         run: |
           node -e "
           const fs = require('fs');
-          const year = '${{ inputs.año }}' ? parseInt('${{ inputs.año }}') : new Date().getFullYear();
+          const year = '${{ inputs.anio }}' ? parseInt('${{ inputs.anio }}') : new Date().getFullYear();
           
           // Festivos fijos de Colombia
           const festivosFijos = [
