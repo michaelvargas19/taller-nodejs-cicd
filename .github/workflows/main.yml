@@ -1,14 +1,17 @@
 # GitHub Actions Workflow - Pipeline de Generación de Festivos en Colombia
 # Este workflow genera un archivo de texto con todos los festivos del año en curso
-# Se ejecuta automáticamente en cambios en la rama main
+# Se ejecuta por demanda (manual) mediante workflow_dispatch
 
 name: Festivos Colombia Pipeline
 
-# Trigger: Se ejecuta cuando hay push en la rama main
+# Trigger: Se ejecuta manualmente mediante workflow_dispatch
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      año:
+        description: 'Año para calcular festivos (si se deja vacío, usa el año actual)'
+        required: false
+        type: string
 
 # Definición del job del pipeline
 jobs:
@@ -35,7 +38,7 @@ jobs:
         run: |
           node -e "
           const fs = require('fs');
-          const year = new Date().getFullYear();
+          const year = '${{ inputs.año }}' ? parseInt('${{ inputs.año }}') : new Date().getFullYear();
           
           // Festivos fijos de Colombia
           const festivosFijos = [
